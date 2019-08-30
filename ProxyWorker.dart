@@ -6,17 +6,33 @@ import 'Protocol.dart';
 
 class ProxyWorker {
 
-	void register(brokerHost, brokerPort, exposePort) {
+	Socket controlSocket = null;
+
+	void register(brokerHost, brokerPort, exposePort, {Function onDone, Function onError}) {
+
+		if (onDone == null) {
+		  onDone = () => {print('worker registered')};
+		}
+
+		if (onError == null) {
+		  onError = (e) => {print('registration failed')};
+		}
+
+		if (controlSocket != null) {
+			onError('already connected!');
+		}
 
 		Socket.connect(brokerHost, brokerPort).then((Socket sock) {
+			
+			controlSocket = sock;
 
 			// send register request to the broker
 			print('sending register request to broker at $brokerHost:$brokerPort for port $exposePort');
 			List<int> msg = buildRegisterWorkerMsg(exposePort);
-			sock.add(msg);
+			controlSocket.add(msg);
 
 			// wait for messages from the broker in this "control" socket
-			sock.listen((List<int> data) {
+			controlSocket.listen((List<int> data) {
 
 	            print('incoming ${data.length} bytes from broker');
 
@@ -31,10 +47,12 @@ class ProxyWorker {
 
 	            	if (msg['retCode'] == RCODE_REGISTER_SUCCESS) {
 	            		print('registration succeeded');
+	            		onDone();
 	            		return;
 	            	} else if (msg['retCode'] == RCODE_REGISTER_FAILED) {
 	            		print('registration failed, closing connection');
-	            		sock.close();
+	            		controlSocket.close();
+	            		onError('registration failed');
 	            	}
 
 	            } else if (msg['version'] == 0xff && msg['cmdCode'] == CMD_OPEN_FORWARDING) {
@@ -103,7 +121,24 @@ class ProxyWorker {
 	            }
 
 	        });
-	    });
+	    }).catchError( (e) => onError(e) );
+	}
+
+
+	bool stop({Function onDone, Function onError}) {
+
+	  if (onDone == null) {
+	    onError = () => {print('server stopped')};
+	  }
+
+	  if (onError == null) {
+	    onError = () => {print('error stopping server')};
+	  }
+
+	  controlSocket.close()
+	    .then((socket) => {onDone()})
+	    .catchError((error) => {onError()});
+	  controlSocket = null;
 	}
 
 }
