@@ -8,7 +8,7 @@ import 'Protocol.dart';
 class ProxyBroker {
 
   ServerSocket mainSocket = null;
-  Map workers = {};
+  Map workers = {};  // port->socket
   List usedForwardingPorts = [];
   
   bool start(port, {Function onDone, Function onError}) {
@@ -52,10 +52,11 @@ class ProxyBroker {
           	print('new worker requesting to listen at port: ${workerId}');
 
           	if (workers.containsKey(workerId)) {
+          		var resp = buildRegisterRejectedResponse(workerId);
           		print('error, a worker has already been registered for that port');
-          		socket.close();
-          		// TODO: handle this correctly: send an error message to the worker
-          		// TODO: maybe a message should also be sent in case of success
+          		socket.add(resp);
+          		// TODO: close connection here? or wait for another msg?
+          		// socket.close(); 
           		return;
           	}
 
@@ -68,30 +69,55 @@ class ProxyBroker {
 				server.listen((Socket browserSocket) {
 					print('new client for proxyPort $workerId');
 
+					browserSocket.done.catchError((error) => print('error on browserSocket for workerId: $workerId, : $error'));
+
 					// request a forwarding connection to the worker
 					requestForwardingConn(workerId, onDone: (workerSocket) {
 
-						// listen in proxySocket for incoming data and forward it to the worker
+						// listen browserSocket for incoming data and forward it to the worker
 						browserSocket.listen((List<int> data) {
 							print('${data.length} bytes of data received from browser in port $workerId, forwarding them to the worker');
-							workerSocket.add(data);
+							try {
+								workerSocket.add(data);
+							} on SocketException {
+								print('socket exception while adding data');
+							} catch (e) {
+								print('caught exception while adding data to socket: $e');
+							}
+						}, onError: (e) {
+							print('error listening from browserSocket: $e');
+							if (e.osError.errorCode == 104) {
+								// Connection reset by peer, errno = 104
+								print('connection reset by peer, closing socket');
+								browserSocket.close();
+							}
 						});
 
+						// listen workerSocket for incoming data and forward it to the browser
 						workerSocket.listen((List<int> data) {
 							print('${data.length} bytes of data received from worker, sending it back to the browser');
-							browserSocket.add(data);
-						});
+							try {
+								browserSocket.add(data);
+							} on SocketException {
+								print('socket exception while adding data');
+							} catch (e) {
+								print('caught exception while adding data to socket: $e');
+							}
+						}, onError: (e) => print('error listening from workerSocket: $e'));
 					});
 
+				}, onError: (error) => print('error while listening for connections in proxy socket for workerId: $workerId. Error: $error'));
 
-				});
-			});
+			}, onError: (error) => print('error binding socket for workerId: $workerId. Error: $error'));
 
+			// send register success msg to the worker
+      		var resp = buildRegisterSuccessResponse(workerId);
+      		socket.add(resp);
           }
 
-        });
+        }, onError: (error) => print('error on listen() for incoming data on dedicated socket'));
 
-      });
+      }, onError: (error) => print('error while listening for connections in main socket'));
 
       onDone();
 
@@ -163,15 +189,11 @@ void main() async {
 
   var server = new ProxyBroker();
 
-  server.start(9090);
+  server.start(9999);
 
   // wait 5 seconds
   await new Future.delayed(const Duration(seconds : 5));
 
   // server.stop();
-
-  // server.requestForwardingConn(9050);
-  // server.requestForwardingConn(8050, onDone: (socket) => print('hello'));
-
 
 }

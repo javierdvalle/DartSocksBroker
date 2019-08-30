@@ -4,11 +4,7 @@ import 'dart:io';
 import 'Protocol.dart';
 
 
-
-
-
 class ProxyWorker {
-
 
 	void register(brokerHost, brokerPort, exposePort) {
 
@@ -30,6 +26,17 @@ class ProxyWorker {
 	            	print('invalid msg');
 	            	return;
 
+	            } else if (msg['version'] == 0x00) {
+	            	// response msg received
+
+	            	if (msg['retCode'] == RCODE_REGISTER_SUCCESS) {
+	            		print('registration succeeded');
+	            		return;
+	            	} else if (msg['retCode'] == RCODE_REGISTER_FAILED) {
+	            		print('registration failed, closing connection');
+	            		sock.close();
+	            	}
+
 	            } else if (msg['version'] == 0xff && msg['cmdCode'] == CMD_OPEN_FORWARDING) {
 	            	// received a request to open a reverse connection
 	            	print('request to open forwarding connection to port: ${msg['port']}');
@@ -43,7 +50,7 @@ class ProxyWorker {
 	            		forwardSocket.listen((List<int> data) {
 	            			print('${data.length} bytes of data received from a forwarding connection');
 
-	            			// NOTE: here starts the SOCKS protocol. The first msg should be a SOCKS4 request
+	            			// NOTE: here starts the normal SOCKS protocol. The first msg should be a SOCKS4 request
 	            			// to connect to some site. The following msgs just need to be forwarded 
 
 	            			if (!granted) {
@@ -103,11 +110,17 @@ class ProxyWorker {
 
 
 
-void main() async {
+void main(List<String> args) async {
 
-  var worker = new ProxyWorker();
+	var exposePort = 8050;
 
-  worker.register('localhost', 9090, 8050);
+	if (args.length > 0) {
+		exposePort = int.parse(args[0]);
+	} 
+
+    var worker = new ProxyWorker();
+
+    worker.register('localhost', 9999, exposePort);
 
 }
 
